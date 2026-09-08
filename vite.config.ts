@@ -10,6 +10,9 @@ export default defineConfig({
   nitro: {
     preset: "cloudflare_module",
     compatibilityDate: "2026-09-08",
+    cloudflare: {
+      wrangler: { name: "linkedin-engine" },
+    },
   },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
