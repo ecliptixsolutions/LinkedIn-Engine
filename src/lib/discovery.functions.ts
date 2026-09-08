@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 export type DiscoveredLead = {
   discovery_id: string;
@@ -162,13 +163,14 @@ async function readLocalApifyConfig(): Promise<LocalApifyConfig> {
   }
 }
 
-async function writeLocalApifyConfig(config: LocalApifyConfig) {
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(
-    `${process.cwd()}/${LOCAL_APIFY_CONFIG_FILE}`,
-    `${JSON.stringify(config, null, 2)}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
+async function readStoredApifyConfig(userId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("apify_connectors")
+    .select("token, linkedin_actor_id, google_maps_actor_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 async function readEnvFileValue(name: string) {
@@ -189,21 +191,36 @@ async function readEnvFileValue(name: string) {
 
 async function getApifyConfig(userId: string) {
   const local = (await readLocalApifyConfig())[userId] ?? {};
+  const stored = await readStoredApifyConfig(userId);
   const envToken = process.env.APIFY_TOKEN || (await readEnvFileValue("APIFY_TOKEN"));
   const envLinkedInActorId =
     process.env.APIFY_LINKEDIN_ACTOR_ID || (await readEnvFileValue("APIFY_LINKEDIN_ACTOR_ID"));
   const envGoogleMapsActorId =
     process.env.APIFY_GOOGLE_MAPS_ACTOR_ID ||
     (await readEnvFileValue("APIFY_GOOGLE_MAPS_ACTOR_ID"));
-  const rawLinkedInActorId = local.linkedinActorId || local.actorId || envLinkedInActorId || "";
+  const rawLinkedInActorId =
+    local.linkedinActorId ||
+    local.actorId ||
+    stored?.linkedin_actor_id ||
+    envLinkedInActorId ||
+    "";
   const rawGoogleMapsActorId =
-    local.googleMapsActorId || envGoogleMapsActorId || DEFAULT_GOOGLE_MAPS_ACTOR_ID;
+    local.googleMapsActorId ||
+    stored?.google_maps_actor_id ||
+    envGoogleMapsActorId ||
+    DEFAULT_GOOGLE_MAPS_ACTOR_ID;
   return {
-    token: local.token || envToken || "",
+    token: local.token || stored?.token || envToken || "",
     linkedinActorId: rawLinkedInActorId ? normalizeActorId(rawLinkedInActorId) : "",
     googleMapsActorId: normalizeActorId(rawGoogleMapsActorId),
     source:
-      local.token || local.actorId || local.linkedinActorId || local.googleMapsActorId
+      local.token ||
+      local.actorId ||
+      local.linkedinActorId ||
+      local.googleMapsActorId ||
+      stored?.token ||
+      stored?.linkedin_actor_id ||
+      stored?.google_maps_actor_id
         ? ("settings" as const)
         : ("environment" as const),
   };
@@ -742,18 +759,22 @@ export const saveApifyLinkedInSettings = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((data: unknown) => apifySettingsInput.parse(data))
   .handler(async ({ data, context }) => {
-    const config = await readLocalApifyConfig();
-    const current = config[context.userId] ?? {};
-    config[context.userId] = {
-      ...current,
-      ...(data.token ? { token: data.token } : {}),
-      ...(data.actorId ? { actorId: normalizeActorId(data.actorId) } : {}),
-      ...(data.googleMapsActorId
-        ? { googleMapsActorId: normalizeActorId(data.googleMapsActorId) }
-        : {}),
-      updatedAt: new Date().toISOString(),
-    };
-    await writeLocalApifyConfig(config);
+    const current = await readStoredApifyConfig(context.userId);
+    const token = data.token || current?.token || null;
+    const linkedinActorId = data.actorId
+      ? normalizeActorId(data.actorId)
+      : current?.linkedin_actor_id || null;
+    const googleMapsActorId = data.googleMapsActorId
+      ? normalizeActorId(data.googleMapsActorId)
+      : current?.google_maps_actor_id || null;
+    const { error } = await supabaseAdmin.from("apify_connectors").upsert({
+      user_id: context.userId,
+      token,
+      linkedin_actor_id: linkedinActorId,
+      google_maps_actor_id: googleMapsActorId,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw error;
     const saved = await getApifyConfig(context.userId);
     return {
       configured: Boolean(saved.token && saved.linkedinActorId),

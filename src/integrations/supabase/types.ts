@@ -8,6 +8,30 @@ export type Database = {
   };
   public: {
     Tables: {
+      apify_connectors: {
+        Row: {
+          google_maps_actor_id: string | null;
+          linkedin_actor_id: string | null;
+          token: string | null;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          google_maps_actor_id?: string | null;
+          linkedin_actor_id?: string | null;
+          token?: string | null;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          google_maps_actor_id?: string | null;
+          linkedin_actor_id?: string | null;
+          token?: string | null;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       activities: {
         Row: {
           activity_type: string;
